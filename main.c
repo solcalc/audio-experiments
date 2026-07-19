@@ -6,6 +6,7 @@
 #include <string.h>
 #include <math.h>
 
+#define MAX_INT16 32767
 #define PI 3.14159265358879323846
 #define NUM_NOTES 8
 #define NOTE_DURATION_SEC 1
@@ -83,7 +84,7 @@ void createWAV() {
 
 int16_t generateNoteAmplitude(float freq, float t) {
     float s = sin(2 * PI * freq * t);
-    int16_t out = (int16_t) (pow(2,15) * s);
+    int16_t out = (int16_t) (MAX_INT16 * s);
     return out;
 }
 
