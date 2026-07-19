@@ -1,3 +1,5 @@
+// Generate a WAV file with a C major scale (C4 to C5) using 16-bit PCM encoding from scratch.
+
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -7,6 +9,7 @@
 #define PI 3.14159265358879323846
 #define NUM_NOTES 8
 #define NOTE_DURATION_SEC 1
+#define SAMPLE_RATE 44100
 
 // WAV file layout:
 //   [RIFF chunk: 12 bytes]
@@ -49,18 +52,33 @@ const float NOTE_FREQ[] = { 261.63f, 293.66f, 329.63f, 349.23f, 392.00f, 440.00f
 int main() {
 
     const char* fpath = "out.wav";
-    struct WAVHeader header = readHeader(fpath);
-    printHeader(header);
-    // createWAV();
+    // struct WAVHeader header = readHeader(fpath);
+    // printHeader(header);
+    createWAV();
+    
 
 
     return 0;
 }
 
 void createWAV() {
+    printf("Generating wav file...");
+
     FILE* out_file = fopen("out.wav", "wb");
     struct WAVHeader header = createHeader();
     fwrite(&header, sizeof(struct WAVHeader), 1, out_file);
+
+    for (int note = 0; note < 8; note++) {
+        int32_t t = 0;
+        while (t < SAMPLE_RATE * NOTE_DURATION_SEC) {
+            int16_t sample = generateNoteAmplitude(NOTE_FREQ[note], (float) t  / (float) SAMPLE_RATE);
+            fwrite(&sample, sizeof(int16_t), 1, out_file);
+            t++;
+        }
+    }
+
+    fclose(out_file);
+    printf("Wav generation complete!");
 }
 
 int16_t generateNoteAmplitude(float freq, float t) {
@@ -101,8 +119,9 @@ struct WAVHeader createHeader() {
 
     // numerical properties
     out.fmtLen = 16;
+    out.fmtType = 1;
     out.nChannels = 1;
-    out.nSampleRate = 44100;
+    out.nSampleRate = SAMPLE_RATE;
     out.wBitsPerSample = 16;
 
     // derived members
