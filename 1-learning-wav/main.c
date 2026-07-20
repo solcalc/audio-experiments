@@ -56,14 +56,15 @@ int main() {
     // struct WAVHeader header = readHeader(fpath);
     // printHeader(header);
     createWAV();
-    
 
+    printf("Playing output...\n");
+    system("aplay out.wav -q\n");
 
     return 0;
 }
 
 void createWAV() {
-    printf("Generating wav file...");
+    printf("Generating wav file...\n");
 
     FILE* out_file = fopen("out.wav", "wb");
     struct WAVHeader header = createHeader();
@@ -79,7 +80,7 @@ void createWAV() {
     }
 
     fclose(out_file);
-    printf("Wav generation complete!");
+    printf("Wav generation complete!\n");
 }
 
 int16_t generateNoteAmplitude(float freq, float t) {
