@@ -2,6 +2,13 @@
 #include <stdint.h>
 #include "clamps.h"
 
+// Definitions (single copy) for the tables declared extern in clamps.h
+float lut_tanh[LUT_SIZE];
+float lut_hardclip[LUT_SIZE];
+float lut_rational1[LUT_SIZE];
+float lut_rational2[LUT_SIZE];
+float lut_rational5[LUT_SIZE];
+float lut_rational10[LUT_SIZE];
 
 void init_lut_functions() {
     build_lut(lut_tanh, shape_tanh, 1.0f);
@@ -36,7 +43,7 @@ float lut_lookup(float *lut, float x) {
 
 float shape_tanh(float x, float k) {
     if (k <= 0.0f) k = 1.0f;
-    return tanhf(k * x) / tanhf(k * LUT_INPUT_MAX / LUT_INPUT_MAX); // normalize edge to ~1
+    return tanhf(x); // normalize edge to ~1 at x = LUT_INPUT_MAX
 }
 
 float shape_hardclip(float x, float param) {

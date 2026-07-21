@@ -4,12 +4,12 @@
 #define LUT_SIZE      1024
 #define LUT_INPUT_MAX 4.0f   // input range the table covers: [-LUT_INPUT_MAX, +LUT_INPUT_MAX]
 
-static float lut_tanh[LUT_SIZE];
-static float lut_hardclip[LUT_SIZE];
-static float lut_rational1[LUT_SIZE];
-static float lut_rational2[LUT_SIZE];
-static float lut_rational5[LUT_SIZE];
-static float lut_rational10[LUT_SIZE];
+extern float lut_tanh[LUT_SIZE];
+extern float lut_hardclip[LUT_SIZE];
+extern float lut_rational1[LUT_SIZE];
+extern float lut_rational2[LUT_SIZE];
+extern float lut_rational5[LUT_SIZE];
+extern float lut_rational10[LUT_SIZE];
 
 // ---- Generic LUT builder: pass in any shaping function ----
 typedef float (*shaper_fn)(float x, float param);
