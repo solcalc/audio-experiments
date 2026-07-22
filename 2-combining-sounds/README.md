@@ -33,3 +33,6 @@ Mixing music is a more subtle problem than I initially anticipated.
 - You can't run the sum of amplitudes through something like a ceiling function or tanh() or they sounds gets distorted.
 
 In practice I learned digital music is actually mixed with a *lookahead limiter*. An algorithm that looks for peaks that go beyond [-1, 1], and gently smooth out those peaks.
+
+The chords also sound quieter than the single notes, which is a bit counterintuitive. I found out this is because amplitude of a signal is not the same as the perceived loudness. Rather, it's from the signal's energy, which decreases for chords. To get the same perceived volume we need to divide by the averageenergy of the signal which is
+$$ E = \sqrt{\frac{1}{T} \int_0^T x(t)^2 dt} $$

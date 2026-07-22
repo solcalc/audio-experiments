@@ -1,4 +1,6 @@
-// Generate a WAV file with a C major scale (C4 to C5) using 16-bit PCM encoding from scratch.
+// Generate a WAV file demonstrating a C major chord: first each note played
+// individually, then the full chord run through a series of shaping curves.
+// 16-bit PCM, written from scratch.
 
 #include <stdio.h>
 #include <stdint.h>
@@ -8,31 +10,35 @@
 #include <math.h>
 #include "clamps.h"
 
-#define MAX_INT16 32767
-#define PI 3.14159265358879323846
-#define NUM_NOTES 8
+#define MAX_INT16         32767
+#define PI                3.14159265358879323846
+#define SAMPLE_RATE       44100
 #define NOTE_DURATION_SEC 1.0
-#define SAMPLE_RATE 44100
+#define SILENCE_SEC       0.1   // gap inserted between segments
 
-struct __attribute__((packed)) WAVHeader{
+// C major chord: C4, E4, G4
+const float NOTE_FREQ[] = { 261.63f, 329.63f, 392.00f };
+const int NUM_CHORD_NOTES = sizeof(NOTE_FREQ) / sizeof(NOTE_FREQ[0]);
+
+struct __attribute__((packed)) WAVHeader {
     // RIFF chunk (12 bytes)
-    char ckID[4]; // "RIFF"
-    uint32_t chunkSize; // 36 + dataSize
-    char wvID[4]; // "WAVE"
+    char ckID[4];             // "RIFF"
+    uint32_t chunkSize;       // 36 + dataSize
+    char wvID[4];             // "WAVE"
 
     // fmt subchunk (24 bytes)
-    char ckMarker[4]; // "fmt "
-    uint32_t fmtLen; // 16 for PCM
-    uint16_t fmtType; // 1 = uncompressed PCM
+    char ckMarker[4];         // "fmt "
+    uint32_t fmtLen;          // 16 for PCM
+    uint16_t fmtType;         // 1 = uncompressed PCM
     uint16_t nChannels;
-    uint32_t nSampleRate; // e.g. 44100
+    uint32_t nSampleRate;     // e.g. 44100
     uint32_t nAvgBytesPerSec; // nSampleRate * nChannels * (wBitsPerSample / 8)
-    uint16_t nBlockAlign; // nChannels * (wBitsPerSample / 8)
+    uint16_t nBlockAlign;     // nChannels * (wBitsPerSample / 8)
     uint16_t wBitsPerSample;
 
     // data subchunk header (8 bytes, followed by samples)
-    char dataHeader[4]; // "data"
-    uint32_t dataSize; // nSampleRate * nChannels * (wBitsPerSample / 8) * seconds
+    char dataHeader[4];       // "data"
+    uint32_t dataSize;        // nSampleRate * nChannels * (wBitsPerSample / 8) * seconds
 };
 
 struct SoundData {
@@ -40,32 +46,92 @@ struct SoundData {
     uint32_t numSamples;
 };
 
-struct WAVHeader readHeader(const char* fpath);
-void printHeader(struct WAVHeader header);
-struct WAVHeader createHeader();
-void createWAV();
-void updateHeaderSize(FILE* file, uint32_t dataSize);
+// Audio generation
 int16_t generateNoteAmplitude(float freq, float t);
 struct SoundData generateNote(float freq, uint32_t numSamples);
-struct SoundData generateChord(float* freqs, uint numFreqs, uint32_t numSamples, float* clamp_lut);
+struct SoundData generateChord(float* freqs, uint numFreqs, uint32_t numSamples, float* shape_lut);
 
-// C major scale frequencies (C4 to C5)
-// const float NOTE_FREQ[] = { 261.63f, 293.66f, 329.63f, 349.23f, 392.00f, 440.00f, 493.88f, 523.25f };
-const float NOTE_FREQ[] = { 261.63f, 329.63f, 392.00f }; // C4, E4, G4 (C major chord)
-const int NUM_CHORD_NOTES = sizeof(NOTE_FREQ) / sizeof(NOTE_FREQ[0]);
+// WAV file output
+void createWAV();
+struct WAVHeader createHeader();
+void updateHeaderSize(FILE* file, uint32_t dataSize);
+
+// WAV header inspection (debugging helpers)
+struct WAVHeader readHeader(const char* fpath);
+void printHeader(struct WAVHeader header);
 
 int main() {
+    init_lut_functions(); // initialize the lookup tables for shaping functions
 
-    init_lut_functions(); // Initialize the lookup tables for shaping functions
-    const char* fpath = "out.wav";
-    // struct WAVHeader header = readHeader(fpath);
-    // printHeader(header);
     createWAV();
 
     printf("Playing output...\n");
     system("aplay out.wav -q\n");
 
     return 0;
+}
+
+// Amplitude of a sine wave at frequency `freq` and time `t`, scaled to int16.
+int16_t generateNoteAmplitude(float freq, float t) {
+    float s = sin(2 * PI * freq * t);
+    return (int16_t)(MAX_INT16 * s);
+}
+
+// Generate PCM samples for a single note of the given frequency and length.
+struct SoundData generateNote(float freq, uint32_t numSamples) {
+    int16_t* samples = (int16_t*)malloc(numSamples * sizeof(int16_t));
+
+    for (uint32_t i = 0; i < numSamples; i++) {
+        float t = (float)i / SAMPLE_RATE;
+        samples[i] = generateNoteAmplitude(freq, t);
+    }
+
+    struct SoundData soundData = { samples, numSamples };
+    return soundData;
+}
+
+// Mix several notes into a chord, then run the result through a shaping curve.
+struct SoundData generateChord(float* freqs, uint numFreqs, uint32_t numSamples, float* shape_lut) {
+    int16_t* samples = (int16_t*)malloc(numSamples * sizeof(int16_t));
+    float* mixed = (float*)malloc(numSamples * sizeof(float));
+    struct SoundData notes[numFreqs];
+
+    for (uint32_t note = 0; note < numFreqs; note++)
+        notes[note] = generateNote(freqs[note], numSamples);
+
+    // pass 1: sum notes, find the raw peak
+    float peak = 0.0f;
+    for (uint32_t i = 0; i < numSamples; i++) {
+        float mixedSample = 0.0f;
+        for (uint32_t note = 0; note < numFreqs; note++)
+            mixedSample += (float)notes[note].samples[i];
+
+        mixed[i] = mixedSample;
+        float mag = fabsf(mixedSample);
+        if (mag > peak) peak = mag;
+    }
+
+    // pass 2: normalize, shape, find the shaped peak
+    float norm = (peak > 0.0f) ? 1.0f / peak : 0.0f;
+    float shapedPeak = 0.0f;
+    for (uint32_t i = 0; i < numSamples; i++) {
+        float shaped = lut_lookup(shape_lut, mixed[i] * norm);
+        mixed[i] = shaped;
+        float mag = fabsf(shaped);
+        if (mag > shapedPeak) shapedPeak = mag;
+    }
+
+    // pass 3: scale up to full scale
+    float gain = (shapedPeak > 0.0f) ? (float)MAX_INT16 / shapedPeak : 0.0f;
+    for (uint32_t i = 0; i < numSamples; i++)
+        samples[i] = (int16_t)(mixed[i] * gain);
+
+    for (uint32_t note = 0; note < numFreqs; note++)
+        free(notes[note].samples);
+    free(mixed);
+
+    struct SoundData out = { samples, numSamples };
+    return out;
 }
 
 void createWAV() {
@@ -79,7 +145,7 @@ void createWAV() {
     uint32_t numSamples = (uint32_t)(SAMPLE_RATE * NOTE_DURATION_SEC);
 
     // short silence written between segments so they're easy to tell apart
-    uint32_t silenceSamples = (uint32_t)(SAMPLE_RATE * 0.1);
+    uint32_t silenceSamples = (uint32_t)(SAMPLE_RATE * SILENCE_SEC);
     int16_t* silence = (int16_t*)calloc(silenceSamples, sizeof(int16_t));
 
     // first, play the notes of the chord one at a time
@@ -93,7 +159,7 @@ void createWAV() {
         dataSize += silenceSamples * sizeof(int16_t);
     }
 
-    // then play the whole chord through each shaping curve.
+    // then play the whole chord through each shaping curve
     float* shapers[] = { lut_hardclip, lut_tanh, lut_rational1, lut_rational2, lut_rational5, lut_rational10 };
     int numShapers = sizeof(shapers) / sizeof(shapers[0]);
 
@@ -113,8 +179,33 @@ void createWAV() {
     printf("Wav generation complete!\n");
 }
 
-// Seek back into an already-written file and patch the two size fields
-// in the RIFF/WAV header to match the actual amount of audio written.
+struct WAVHeader createHeader() {
+    struct WAVHeader out;
+
+    // fixed character tags
+    memcpy(out.ckID, "RIFF", 4);
+    memcpy(out.wvID, "WAVE", 4);
+    memcpy(out.ckMarker, "fmt ", 4);
+    memcpy(out.dataHeader, "data", 4);
+
+    // format properties
+    out.fmtLen = 16;
+    out.fmtType = 1;
+    out.nChannels = 1;
+    out.nSampleRate = SAMPLE_RATE;
+    out.wBitsPerSample = 16;
+
+    // derived properties
+    out.nAvgBytesPerSec = out.nSampleRate * out.nChannels * (out.wBitsPerSample / 8);
+    out.nBlockAlign = out.nChannels * (out.wBitsPerSample / 8);
+
+    // placeholder sizes; patched by updateHeaderSize after audio is written
+    out.dataSize = 0;
+    out.chunkSize = out.dataSize + sizeof(struct WAVHeader) - 8;
+
+    return out;
+}
+
 void updateHeaderSize(FILE* file, uint32_t dataSize) {
     uint32_t chunkSize = dataSize + sizeof(struct WAVHeader) - 8;
 
@@ -125,73 +216,6 @@ void updateHeaderSize(FILE* file, uint32_t dataSize) {
     fwrite(&dataSize, sizeof(uint32_t), 1, file);
 
     fseek(file, 0, SEEK_END); // restore position in case more is written
-}
-
-// Generate PCM samples for a given frequency and duration
-struct SoundData generateNote(float freq, uint32_t numSamples) {
-    int16_t* samples = (int16_t*)malloc(numSamples * sizeof(int16_t));
-
-    for (uint32_t i = 0; i < numSamples; i++) {
-        float t = (float)i / SAMPLE_RATE;
-        samples[i] = generateNoteAmplitude(freq, t);
-    }
-
-    struct SoundData soundData = { samples, numSamples };
-    return soundData;
-}
-
-struct SoundData generateChord(float* freqs, uint numFreqs, uint32_t numSamples, float* shape_lut) {
-    int16_t* samples = (int16_t*)malloc(numSamples * sizeof(int16_t));
-    float* mixed = (float*)malloc(numSamples * sizeof(float));
-    struct SoundData notes[numFreqs];
-
-    // generate individual notes
-    for (uint32_t _note = 0; _note < numFreqs; _note++)
-        notes[_note] = generateNote(freqs[_note], numSamples);
-
-    // pass 1: sum the notes and track the largest magnitude in the raw mix
-    float peak = 0.0f;
-    for (uint32_t i = 0; i < numSamples; i++) {
-        float mixedSample = 0.0f;
-        for (uint32_t _note = 0; _note < numFreqs; _note++)
-            mixedSample += (float)notes[_note].samples[i];
-
-        mixed[i] = mixedSample;
-        float mag = fabsf(mixedSample);
-        if (mag > peak) peak = mag;
-    }
-
-    // pass 2: normalize the mix into [-1, 1], then run it through the shaping
-    // curve. because the signal is already in range, hardclip is a no-op here
-    // (a clean chord); tanh/rational round the peaks -> saturation. track the
-    // shaped peak so every shaper comes back at the same loudness.
-    float norm = (peak > 0.0f) ? 1.0f / peak : 0.0f;
-    float shapedPeak = 0.0f;
-    for (uint32_t i = 0; i < numSamples; i++) {
-        float shaped = lut_lookup(shape_lut, mixed[i] * norm);
-        mixed[i] = shaped;
-        float mag = fabsf(shaped);
-        if (mag > shapedPeak) shapedPeak = mag;
-    }
-
-    // pass 3: scale the shaped signal up to full scale
-    float gain = (shapedPeak > 0.0f) ? (float)MAX_INT16 / shapedPeak : 0.0f;
-    for (uint32_t i = 0; i < numSamples; i++)
-        samples[i] = (int16_t)(mixed[i] * gain);
-
-    // free individual note samples and the scratch mix buffer
-    for (uint32_t _note = 0; _note < numFreqs; _note++)
-        free(notes[_note].samples);
-    free(mixed);
-
-    struct SoundData out = { samples, numSamples };
-    return out;
-}
-
-int16_t generateNoteAmplitude(float freq, float t) {
-    float s = sin(2 * PI * freq * t);
-    int16_t out = (int16_t) (MAX_INT16 * s);
-    return out;
 }
 
 struct WAVHeader readHeader(const char* fpath) {
@@ -207,37 +231,10 @@ struct WAVHeader readHeader(const char* fpath) {
         fclose(file);
         printf("Read %zu bytes from file\n", sizeof(struct WAVHeader));
         return header;
-    }
-
-    else {
+    } else {
         perror("Error reading file");
         exit(EXIT_FAILURE);
     }
-}
-
-struct WAVHeader createHeader() {
-    struct WAVHeader out;
-
-    // fixed characters headers
-    memcpy(out.ckID, "RIFF", 4);
-    memcpy(out.wvID, "WAVE", 4);
-    memcpy(out.ckMarker, "fmt ", 4);
-    memcpy(out.dataHeader, "data", 4);
-
-    // numerical properties
-    out.fmtLen = 16;
-    out.fmtType = 1;
-    out.nChannels = 1;
-    out.nSampleRate = SAMPLE_RATE;
-    out.wBitsPerSample = 16;
-
-    // derived members
-    out.nAvgBytesPerSec = out.nSampleRate * out.nChannels * (out.wBitsPerSample / 8);
-    out.nBlockAlign = out.nChannels * (out.wBitsPerSample / 8);
-    out.dataSize = (uint32_t)(out.nSampleRate * out.nChannels * (out.wBitsPerSample / 8) * NUM_NOTES * NOTE_DURATION_SEC);
-    out.chunkSize = out.dataSize + 44 - 8;
-
-    return out;
 }
 
 void printHeader(struct WAVHeader header) {
